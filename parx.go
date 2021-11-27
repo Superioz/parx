@@ -10,18 +10,25 @@ import (
 	"io/ioutil"
 	"os"
 	"os/exec"
+	"os/signal"
 	"sync"
+	"syscall"
 )
 
-var colors = []color.Attribute{
-	color.FgBlue,
-	color.FgRed,
-	color.FgGreen,
-	color.FgYellow,
-	color.FgCyan,
-	color.FgMagenta,
-	color.FgWhite,
-}
+var (
+	colors = []color.Attribute{
+		color.FgBlue,
+		color.FgRed,
+		color.FgGreen,
+		color.FgYellow,
+		color.FgCyan,
+		color.FgMagenta,
+		color.FgWhite,
+	}
+
+	lock    sync.Mutex
+	running []*exec.Cmd
+)
 
 func main() {
 	shell := flag.String("x", "bash", "Default shell when using commands via arguments")
@@ -63,6 +70,18 @@ func main() {
 		config.Processes = processes
 	}
 
+	// when receiving a terminate signal, make sure to close all
+	// subprocesses as well
+	sigs := make(chan os.Signal, 1)
+	signal.Notify(sigs, syscall.SIGINT, syscall.SIGTERM, syscall.SIGKILL, syscall.SIGQUIT)
+	go func() {
+		<-sigs
+		for _, cmd := range running {
+			_ = cmd.Process.Kill()
+		}
+		os.Exit(0)
+	}()
+
 	wg := sync.WaitGroup{}
 	for i, process := range config.Processes {
 		// generate color for this process
@@ -73,6 +92,10 @@ func main() {
 		go func(process *Process) {
 			defer wg.Done()
 			cmd := process.ToExecCommand()
+
+			lock.Lock()
+			running = append(running, cmd)
+			lock.Unlock()
 
 			err := cmd.Run()
 			if err != nil {
@@ -85,10 +108,12 @@ func main() {
 	wg.Wait()
 }
 
+// Config contains all processes that should be run in parallel.
 type Config struct {
 	Processes []*Process `json:"processes"`
 }
 
+// Process represents a single process to execute.
 type Process struct {
 	Name    string            `json:"name"`
 	Shell   string            `json:"shell"`
@@ -120,6 +145,8 @@ func (p *Process) ToExecCommand() *exec.Cmd {
 	return p.cmd
 }
 
+// PrefixedWriter is an util struct to wrap around an existing
+// io.Writer and prefix every messages that goes through it.
 type PrefixedWriter struct {
 	Prefix string
 
