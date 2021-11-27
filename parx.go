@@ -76,9 +76,9 @@ func main() {
 
 			err := cmd.Run()
 			if err != nil {
-				fmt.Println(fmt.Sprintf("%s exited with an error: %v", process.Name, err))
+				fmt.Printf("%s exited with an error: %v\n", process.Name, err)
 			} else {
-				fmt.Println(fmt.Sprintf("%s exited", process.Name))
+				fmt.Printf("%s exited\n", process.Name)
 			}
 		}(process)
 	}
