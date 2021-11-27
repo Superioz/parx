@@ -1,0 +1,14 @@
+processes:
+  - name: hello
+    command: echo Hello $NAME!
+    env:
+      NAME: Thomas
+  - name: sleep 1
+    shell: bash
+    command: echo 3; sleep 1; echo 2; sleep 1; echo 1; sleep 1; echo Go!!
+  - name: sleep 2
+    shell: sh
+    command: echo 5; sleep 1; echo 4; sleep 1; echo 3; sleep 1; echo 2; sleep 1; echo 1; sleep 1; echo Go!!
+    env:
+      NAME: Peter
+      STATE: Awful
