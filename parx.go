@@ -27,7 +27,7 @@ var (
 	}
 
 	lock    sync.Mutex
-	running []*exec.Cmd
+	running []ProcessKillable
 )
 
 func main() {
@@ -70,17 +70,7 @@ func main() {
 		config.Processes = processes
 	}
 
-	// when receiving a terminate signal, make sure to close all
-	// subprocesses as well
-	sigs := make(chan os.Signal, 1)
-	signal.Notify(sigs, syscall.SIGINT, syscall.SIGTERM, syscall.SIGKILL, syscall.SIGQUIT)
-	go func() {
-		<-sigs
-		for _, cmd := range running {
-			_ = cmd.Process.Kill()
-		}
-		os.Exit(0)
-	}()
+	addSignalHandler()
 
 	wg := sync.WaitGroup{}
 	for i, process := range config.Processes {
@@ -93,8 +83,11 @@ func main() {
 			defer wg.Done()
 			cmd := process.ToExecCommand()
 
+			// get OS specific cmd kill handler
+			cmdWrap := NewProcessKillable(cmd)
+
 			lock.Lock()
-			running = append(running, cmd)
+			running = append(running, cmdWrap)
 			lock.Unlock()
 
 			err := cmd.Run()
@@ -133,6 +126,8 @@ func (p *Process) ToExecCommand() *exec.Cmd {
 	}
 
 	p.cmd = exec.Command(p.Shell, "-c", p.Command)
+
+	// pass environment variables from the env of parx to the process
 	p.cmd.Env = os.Environ()
 	for key, val := range p.Env {
 		p.cmd.Env = append(p.cmd.Env, fmt.Sprintf("%s=%s", key, val))
@@ -145,29 +140,69 @@ func (p *Process) ToExecCommand() *exec.Cmd {
 	return p.cmd
 }
 
+type ProcessKillable interface {
+	Kill() error
+}
+
+func addSignalHandler() {
+	// when receiving a terminate signal, make sure to close all
+	// subprocesses as well
+	sigs := make(chan os.Signal, 1)
+	signal.Notify(sigs, syscall.SIGINT, syscall.SIGTERM, syscall.SIGQUIT)
+	go func() {
+		<-sigs
+		for _, cmd := range running {
+			// cmd.Kill() uses a OS specific logic to kill the children
+			err := cmd.Kill()
+			if err != nil {
+				fmt.Printf("could not kill process: %v", err)
+			}
+		}
+		os.Exit(0)
+	}()
+}
+
 // PrefixedWriter is an util struct to wrap around an existing
 // io.Writer and prefix every messages that goes through it.
 type PrefixedWriter struct {
 	Prefix string
 
-	colorize func(...interface{}) string
-	target   io.Writer
-	buf      bytes.Buffer
+	colorize      func(...interface{}) string
+	target        io.Writer
+	buf           bytes.Buffer
+	coloredPrefix string
 }
 
 func NewPrefixedWriter(prefix string, prefixColor color.Attribute, target io.Writer) *PrefixedWriter {
-	return &PrefixedWriter{
+	p := &PrefixedWriter{
 		Prefix:   prefix,
 		colorize: color.New(prefixColor).SprintFunc(),
 		target:   target,
 	}
+	p.coloredPrefix = p.colorize(p.Prefix)
+
+	return p
 }
 
 func (p *PrefixedWriter) Write(payload []byte) (int, error) {
 	p.buf.Reset()
 
-	p.buf.WriteString(p.colorize(p.Prefix))
-	p.buf.Write(payload)
+	p.buf.WriteString(p.coloredPrefix)
+
+	previousNewLine := false
+	for _, b := range payload {
+		if previousNewLine {
+			// each line has a new prefix
+			p.buf.WriteString(p.coloredPrefix)
+			previousNewLine = false
+		}
+
+		p.buf.WriteByte(b)
+
+		if b == '\n' {
+			previousNewLine = true
+		}
+	}
 
 	n, err := p.target.Write(p.buf.Bytes())
 	if err != nil {
