@@ -167,17 +167,19 @@ func addSignalHandler() {
 type PrefixedWriter struct {
 	Prefix string
 
-	colorize      func(...interface{}) string
-	target        io.Writer
-	buf           bytes.Buffer
-	coloredPrefix string
+	colorize        func(...interface{}) string
+	target          io.Writer
+	buf             bytes.Buffer
+	coloredPrefix   string
+	previousNewLine bool
 }
 
 func NewPrefixedWriter(prefix string, prefixColor color.Attribute, target io.Writer) *PrefixedWriter {
 	p := &PrefixedWriter{
-		Prefix:   prefix,
-		colorize: color.New(prefixColor).SprintFunc(),
-		target:   target,
+		Prefix:          prefix,
+		colorize:        color.New(prefixColor).SprintFunc(),
+		target:          target,
+		previousNewLine: true,
 	}
 	p.coloredPrefix = p.colorize(p.Prefix)
 
@@ -187,20 +189,17 @@ func NewPrefixedWriter(prefix string, prefixColor color.Attribute, target io.Wri
 func (p *PrefixedWriter) Write(payload []byte) (int, error) {
 	p.buf.Reset()
 
-	p.buf.WriteString(p.coloredPrefix)
-
-	previousNewLine := false
 	for _, b := range payload {
-		if previousNewLine {
+		if p.previousNewLine {
 			// each line has a new prefix
 			p.buf.WriteString(p.coloredPrefix)
-			previousNewLine = false
+			p.previousNewLine = false
 		}
 
 		p.buf.WriteByte(b)
 
 		if b == '\n' {
-			previousNewLine = true
+			p.previousNewLine = true
 		}
 	}
 
